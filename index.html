@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Choose T3 Code customizations and copy a paste-ready DevTools bundle."
+    />
+    <meta name="theme-color" content="#11120f" />
+    <title>T3 Code customizations</title>
+    <link rel="stylesheet" href="site.css" />
+    <script type="module" src="site.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="wordmark" href="./" aria-label="T3 Code customizations home">
+        <span class="wordmark-mark" aria-hidden="true">T3</span>
+        <span>Customizations</span>
+      </a>
+      <a
+        class="github-link"
+        href="https://github.com/rdbell/t3-customizations"
+        rel="noreferrer"
+      >
+        View source
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M7 17 17 7M8 7h9v9" />
+        </svg>
+      </a>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">DevTools bundle builder</p>
+        <h1 id="page-title">Pick what T3 Code should do differently.</h1>
+        <p class="intro-copy">
+          Choose a few focused changes, copy one script, and paste it into T3 Code's DevTools
+          console. Nothing is installed and a reload removes it.
+        </p>
+      </section>
+
+      <section class="builder" aria-label="Bundle builder">
+        <div class="feature-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="step-label">01</p>
+              <h2>Choose features</h2>
+            </div>
+            <div class="selection-actions" aria-label="Selection shortcuts">
+              <button type="button" data-selection-action="all">All</button>
+              <span aria-hidden="true">/</span>
+              <button type="button" data-selection-action="none">None</button>
+            </div>
+          </div>
+
+          <div class="feature-list">
+            <label class="feature-card" for="feature-project-groups">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M3 7h6l2 2h10v10H3z" />
+                  <path d="M3 7V5h6l2 2" />
+                </svg>
+              </span>
+              <span class="feature-copy">
+                <span class="feature-title">Project groups</span>
+                <span class="feature-description">
+                  Group Active, Snoozed, and Settled threads by project with collapsible headers.
+                </span>
+              </span>
+              <input
+                aria-label="Project groups"
+                checked
+                data-feature="projectGroups"
+                id="feature-project-groups"
+                type="checkbox"
+              />
+              <span class="check-control" aria-hidden="true"></span>
+            </label>
+
+            <label class="feature-card" for="feature-sidebar-sorting">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M8 6h13M8 12h9M8 18h5" />
+                  <path d="M3 4v16M1 18l2 2 2-2" />
+                </svg>
+              </span>
+              <span class="feature-copy">
+                <span class="feature-title-row">
+                  <span class="feature-title">Sidebar sorting</span>
+                  <span class="dependency-tag">Uses project groups</span>
+                </span>
+                <span class="feature-description">
+                  Sort project groups and threads by name, attention, update time, or age.
+                </span>
+              </span>
+              <input
+                aria-label="Sidebar sorting"
+                checked
+                data-feature="sidebarSorting"
+                id="feature-sidebar-sorting"
+                type="checkbox"
+              />
+              <span class="check-control" aria-hidden="true"></span>
+            </label>
+
+            <label class="feature-card" for="feature-notifications">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                  <path d="M10 21h4" />
+                </svg>
+              </span>
+              <span class="feature-copy">
+                <span class="feature-title">Thread notifications</span>
+                <span class="feature-description">
+                  Notify when an active thread stops working, with badges and the codec sound.
+                </span>
+              </span>
+              <input
+                aria-label="Thread notifications"
+                checked
+                data-feature="notifications"
+                id="feature-notifications"
+                type="checkbox"
+              />
+              <span class="check-control" aria-hidden="true"></span>
+            </label>
+
+            <label class="feature-card" for="feature-message-reuse">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M3 12a9 9 0 1 0 3-7.7L3 7" />
+                  <path d="M3 3v4h4" />
+                </svg>
+              </span>
+              <span class="feature-copy">
+                <span class="feature-title">Reuse messages</span>
+                <span class="feature-description">
+                  Put an earlier user message back in the composer, with optional auto-send.
+                </span>
+              </span>
+              <input
+                aria-label="Reuse messages"
+                checked
+                data-feature="messageReuse"
+                id="feature-message-reuse"
+                type="checkbox"
+              />
+              <span class="check-control" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
+
+        <aside class="bundle-panel" aria-labelledby="bundle-title">
+          <div class="panel-heading bundle-heading">
+            <div>
+              <p class="step-label">02</p>
+              <h2 id="bundle-title">Copy bundle</h2>
+            </div>
+            <span class="feature-count" data-feature-count>4 selected</span>
+          </div>
+
+          <div class="bundle-preview" aria-live="polite">
+            <div class="bundle-window-bar">
+              <span></span><span></span><span></span>
+              <p>t3-customizations.js</p>
+            </div>
+            <pre><code data-bundle-preview></code></pre>
+          </div>
+
+          <ul class="selected-list" data-selected-list></ul>
+
+          <button class="copy-button" type="button" data-copy-bundle>
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>Copy bundle</span>
+          </button>
+          <p class="copy-status" data-copy-status role="status">
+            The bundle is assembled in this browser and copied locally.
+          </p>
+        </aside>
+      </section>
+
+      <section class="instructions" aria-labelledby="install-title">
+        <div>
+          <p class="step-label">03</p>
+          <h2 id="install-title">Paste into T3 Code</h2>
+        </div>
+        <ol>
+          <li><span>1</span>Open T3 Code's DevTools console.</li>
+          <li><span>2</span>Paste the copied bundle and press Enter.</li>
+          <li><span>3</span>Reload T3 Code whenever you want to remove it.</li>
+        </ol>
+      </section>
+    </main>
+
+    <footer>
+      <p>Unofficial customizations for T3 Code.</p>
+      <p>Read the script before pasting code into DevTools.</p>
+    </footer>
+  </body>
+</html>
