@@ -16,10 +16,15 @@
       "Done",
     ]);
 
-    let enabled = false;
+    let enabled = true;
+    let desktopEnabled = false;
+    let enableRequest = 0;
     let codecSoundUrl = null;
     const threadStates = new Map();
     const badges = new Map();
+    const desktopNotifications = new Map();
+    const suppressedStops = new Map();
+    let appBadgeSync = Promise.resolve();
     let sound = (() => {
       try {
         const stored = localStorage.getItem(SOUND_STORAGE_KEY);
@@ -59,6 +64,7 @@
         project: props.projectTitle?.trim() || context.projectName(row),
         status: currentStatus,
         title: thread.title?.trim() || "Untitled thread",
+        viewing: props.isActive === true,
         working: BUSY_STATUSES.has(currentStatus),
       };
     }
@@ -78,6 +84,7 @@
       return {
         appBadgeSupported: typeof navigator.setAppBadge === "function",
         badgeCount: badges.size,
+        desktopEnabled,
         enabled,
         permission: window.Notification?.permission ?? "unsupported",
         sound,
@@ -85,36 +92,84 @@
       };
     }
 
-    async function syncAppBadge() {
-      try {
-        if (badges.size > 0 && typeof navigator.setAppBadge === "function") {
-          await navigator.setAppBadge(badges.size);
-        } else if (badges.size === 0) {
-          if (typeof navigator.clearAppBadge === "function") {
-            await navigator.clearAppBadge();
-          } else if (typeof navigator.setAppBadge === "function") {
-            await navigator.setAppBadge(0);
+    function syncAppBadge() {
+      const count = badges.size;
+      appBadgeSync = appBadgeSync.then(async () => {
+        try {
+          if (count > 0 && typeof navigator.setAppBadge === "function") {
+            await navigator.setAppBadge(count);
+          } else if (count === 0) {
+            if (typeof navigator.clearAppBadge === "function") {
+              await navigator.clearAppBadge();
+            } else if (typeof navigator.setAppBadge === "function") {
+              await navigator.setAppBadge(0);
+            }
           }
+        } catch {
+          // Electron may expose Chromium's API without supporting the host OS badge.
         }
+      });
+      return appBadgeSync;
+    }
+
+    function closeDesktopNotification(key) {
+      const notification = desktopNotifications.get(key);
+      if (!notification) return false;
+
+      desktopNotifications.delete(key);
+      try {
+        notification.close();
       } catch {
-        // Electron may expose Chromium's API without supporting the host OS badge.
+        // A notification can already be closed by the host.
       }
+      return true;
     }
 
     function clearBadge(key) {
-      if (!badges.delete(key)) return false;
-      void syncAppBadge();
-      context.schedule();
+      const removed = badges.delete(key);
+      const closed = closeDesktopNotification(key);
+      if (!removed && !closed) return false;
+      if (removed) {
+        void syncAppBadge();
+        context.schedule();
+      }
       return true;
     }
 
     function clearBadges() {
-      if (badges.size === 0) return 0;
       const count = badges.size;
       badges.clear();
-      void syncAppBadge();
-      context.schedule();
+      for (const key of [...desktopNotifications.keys()]) closeDesktopNotification(key);
+      if (count > 0) {
+        void syncAppBadge();
+        context.schedule();
+      }
       return count;
+    }
+
+    function documentIsForeground() {
+      return (
+        document.visibilityState !== "hidden" &&
+        (typeof document.hasFocus !== "function" || document.hasFocus())
+      );
+    }
+
+    function acknowledge(key, options = {}) {
+      if (options.suppressNextStop === true) {
+        suppressedStops.set(key, Date.now() + 10_000);
+      }
+      return clearBadge(key);
+    }
+
+    function acknowledgeViewedThread(options = {}) {
+      const viewed = [...threadStates.values()].find((thread) => thread.viewing);
+      if (!viewed) return false;
+      return acknowledge(viewed.key, options);
+    }
+
+    function acknowledgeVisibleThread() {
+      if (!documentIsForeground()) return false;
+      return acknowledgeViewedThread();
     }
 
     function groupCount(rows) {
@@ -246,15 +301,17 @@
     }
 
     function show(thread) {
-      if (!enabled || window.Notification?.permission !== "granted") return;
+      if (!enabled || !desktopEnabled || window.Notification?.permission !== "granted") return;
 
       try {
         const currentStatus = thread.status ?? "Ready";
+        closeDesktopNotification(thread.key);
         const notification = new window.Notification("Thread stopped working", {
           body: `${thread.title}\n${thread.project} · ${currentStatus}`,
           silent: sound !== "system",
           tag: `t3-thread-stopped-${thread.key}`,
         });
+        desktopNotifications.set(thread.key, notification);
         void playSound();
         notification.onclick = () => {
           clearBadge(thread.key);
@@ -263,6 +320,11 @@
             ?.querySelector('[data-testid="sidebar-row-card"], [data-testid="sidebar-row-slim"]')
             ?.click();
           notification.close();
+        };
+        notification.onclose = () => {
+          if (desktopNotifications.get(thread.key) === notification) {
+            desktopNotifications.delete(thread.key);
+          }
         };
       } catch (error) {
         console.warn("Could not show the T3 thread notification.", error);
@@ -279,7 +341,19 @@
 
         currentKeys.add(current.key);
         const previous = threadStates.get(current.key);
-        if (previous?.active && previous.working && !current.working) {
+        const becameViewed = previous && !previous.viewing && current.viewing;
+        if (badges.has(current.key) && (current.working || becameViewed)) {
+          clearBadge(current.key);
+        }
+
+        const stopped = previous?.active && previous.working && !current.working;
+        const suppressionExpiresAt = suppressedStops.get(current.key) ?? 0;
+        const stopWasSuppressed = stopped && suppressionExpiresAt >= Date.now();
+        if (stopped || suppressionExpiresAt < Date.now()) {
+          suppressedStops.delete(current.key);
+        }
+
+        if (enabled && stopped && !stopWasSuppressed && !becameViewed) {
           badges.set(current.key, current);
           void syncAppBadge();
           show(current);
@@ -293,9 +367,11 @@
     }
 
     async function enable() {
+      const request = ++enableRequest;
+      enabled = true;
       const NotificationApi = window.Notification;
       if (typeof NotificationApi !== "function") {
-        enabled = false;
+        desktopEnabled = false;
         console.warn("Desktop notifications are not available in this T3 renderer.");
         return false;
       }
@@ -305,23 +381,31 @@
           NotificationApi.permission === "default"
             ? await NotificationApi.requestPermission()
             : NotificationApi.permission;
-        enabled = permission === "granted";
-        if (!enabled) console.warn(`T3 thread notifications are ${permission}.`);
-        return enabled;
+        if (request !== enableRequest || !enabled) return false;
+        desktopEnabled = permission === "granted";
+        if (!desktopEnabled) console.warn(`T3 desktop notifications are ${permission}.`);
+        return desktopEnabled;
       } catch (error) {
-        enabled = false;
+        if (request !== enableRequest || !enabled) return false;
+        desktopEnabled = false;
         console.warn("Could not enable T3 thread notifications.", error);
         return false;
       }
     }
 
     function disable() {
+      enableRequest++;
       enabled = false;
+      desktopEnabled = false;
+      suppressedStops.clear();
+      clearBadges();
       console.info("T3 thread notifications disabled.");
     }
 
     function test() {
-      if (!enabled || window.Notification?.permission !== "granted") return false;
+      if (!enabled || !desktopEnabled || window.Notification?.permission !== "granted") {
+        return false;
+      }
       new window.Notification("T3 notifications are working", {
         body: "You will be notified when an active thread stops working.",
         silent: sound !== "system",
@@ -333,11 +417,16 @@
 
     function destroy() {
       badges.clear();
+      suppressedStops.clear();
+      for (const key of [...desktopNotifications.keys()]) closeDesktopNotification(key);
       void syncAppBadge();
       if (codecSoundUrl) URL.revokeObjectURL(codecSoundUrl);
     }
 
     return {
+      acknowledge,
+      acknowledgeViewedThread,
+      acknowledgeVisibleThread,
       clearBadge,
       clearBadges,
       destroy,

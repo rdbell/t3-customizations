@@ -24,7 +24,7 @@ The customization:
 - compresses active cards to two lines;
 - shows an activity or attention summary on collapsed groups;
 - sends a desktop notification with optional custom sound when an active thread stops working;
-- badges affected project groups and, where supported, the app icon until the thread is opened;
+- badges affected project groups and, where supported, the app icon until the notification is acknowledged;
 - adds a Reuse message action beside Copy on user messages, with optional auto-send;
 - adds a Customizations page to Settings with notification and sorting controls;
 - persists settings and collapse choices in `localStorage`; and
@@ -129,18 +129,23 @@ window.__t3ProjectGroupedSections.setSnoozedPinnedFirst(false)
 ```
 
 `codec.wav` and volume `0.5` are the defaults. The sound and volume persist in `localStorage`. A
-project badge clears when you open one of its notified threads. Clear every badge manually with:
+notification clears when you open its thread, return focus to that already-open thread, send a new
+message, or start another turn. Using the visible Stop, Snooze, or Settle controls does not create
+a completion notification. Clear every badge manually with:
 
 ```js
 window.__t3ProjectGroupedSections.clearNotificationBadges()
 ```
 
-Enable or disable desktop notifications:
+Enable or disable notifications:
 
 ```js
 window.__t3ProjectGroupedSections.enableNotifications()
 window.__t3ProjectGroupedSections.disableNotifications()
 ```
+
+Disabling notifications also clears existing project and app badges. Enabling them again watches
+only for future stop events.
 
 Disable it without reloading:
 
@@ -166,12 +171,20 @@ features/
   sidebar-sorting.js
   settings.js
   sidebar-project-groups.js
+tests/
+  notifications.test.js
 copy-customization.sh
 codec.wav
 ```
 
 Add feature behavior to its matching module. Keep shared DOM lookup, scheduling, lifecycle, and
 the public console API in `customizations.js`.
+
+Run the notification state regression test with:
+
+```sh
+node tests/notifications.test.js
+```
 
 ### Compatibility
 

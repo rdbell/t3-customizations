@@ -236,6 +236,13 @@
       const target =
         record.target instanceof Element ? record.target : record.target.parentElement;
       if (sidebarFeature && target?.closest(`[${sidebarFeature.headingAttribute}]`)) return false;
+      if (record.type === "attributes") {
+        return Boolean(
+          target?.matches(
+            '[data-testid="sidebar-row-card"], [data-testid="sidebar-row-slim"]',
+          ),
+        );
+      }
       if (record.type === "characterData") {
         return Boolean(
           target?.closest('li[data-thread-item]') && target.closest('[role="status"]'),
@@ -253,6 +260,8 @@
     if (appChanged) schedule();
   });
   observer.observe(document.querySelector("[data-app-sidebar]") ?? document.documentElement, {
+    attributeFilter: ["class"],
+    attributes: true,
     characterData: true,
     childList: true,
     subtree: true,
@@ -263,18 +272,42 @@
     settingsFeature?.handleClick(event);
 
     if (!notifications) return;
+    if (event.target.closest('[aria-label="Stop generation"]')) {
+      notifications.acknowledgeViewedThread({ suppressNextStop: true });
+      return;
+    }
     const row = event.target.closest('li[data-thread-item]');
     if (!row?.closest("[data-app-sidebar]")) return;
     const snapshot = notifications.snapshot(row, rowSection(row) === "active");
-    if (snapshot) notifications.clearBadge(snapshot.key);
+    if (snapshot) {
+      const suppressNextStop = Boolean(
+        event.target.closest('[aria-label="Settle thread"], [aria-label="Snooze thread"]'),
+      );
+      notifications.acknowledge(snapshot.key, { suppressNextStop });
+    }
   }
   document.addEventListener("click", handleThreadClick, true);
 
+  function handleComposerSubmit(event) {
+    if (!(event.target instanceof Element)) return;
+    if (!event.target.matches('[data-chat-composer-form="true"]')) return;
+    notifications?.acknowledgeViewedThread();
+  }
+  document.addEventListener("submit", handleComposerSubmit, true);
+
   function handleNavigation() {
     settingsFeature?.handleNavigation();
+    schedule();
   }
   window.addEventListener("hashchange", handleNavigation);
   window.addEventListener("popstate", handleNavigation);
+
+  function handleAttentionReturn() {
+    notifications?.acknowledgeVisibleThread();
+    schedule();
+  }
+  window.addEventListener("focus", handleAttentionReturn);
+  document.addEventListener("visibilitychange", handleAttentionReturn);
 
   window[GLOBAL] = {
     refresh: apply,
@@ -316,6 +349,9 @@
       observer.disconnect();
       cancelAnimationFrame(frame);
       document.removeEventListener("click", handleThreadClick, true);
+      document.removeEventListener("submit", handleComposerSubmit, true);
+      document.removeEventListener("visibilitychange", handleAttentionReturn);
+      window.removeEventListener("focus", handleAttentionReturn);
       window.removeEventListener("hashchange", handleNavigation);
       window.removeEventListener("popstate", handleNavigation);
       settingsFeature?.destroy();
