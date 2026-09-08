@@ -7,14 +7,19 @@
     const VOLUME_STORAGE_KEY = "t3-thread-notification-volume-v4";
     const SOUND_PRESETS = new Set(["codec", "system", "chime", "ping", "none"]);
     const BUSY_STATUSES = new Set(["Working", "Monitoring"]);
+    const ATTENTION_STATUSES = new Set(["Approval", "Input", "Plan", "Failed", "Done"]);
     const THREAD_STATUSES = new Set([
       ...BUSY_STATUSES,
-      "Approval",
-      "Input",
-      "Failed",
+      ...ATTENTION_STATUSES,
       "Woke",
-      "Done",
     ]);
+    const NOTIFICATION_COPY = {
+      Approval: { title: "Thread needs approval", kind: "approval" },
+      Input: { title: "Thread needs your input", kind: "input" },
+      Plan: { title: "Plan is ready", kind: "plan" },
+      Failed: { title: "Thread failed", kind: "failed" },
+      Done: { title: "Thread finished", kind: "done" },
+    };
 
     let enabled = true;
     let desktopEnabled = false;
@@ -43,13 +48,59 @@
       }
     })();
 
-    function status(row) {
-      const statusRoot = context.activeCardParts(row)?.top ?? row;
+    function statusLabel(node) {
+      const raw = node.textContent.trim();
+      if (THREAD_STATUSES.has(raw)) return raw;
+      if (/^Pending Approval\b/i.test(raw) || /^Approval\b/i.test(raw)) return "Approval";
+      if (/^Awaiting Input\b/i.test(raw) || /^Input\b/i.test(raw)) return "Input";
+      if (/^Plan Ready\b/i.test(raw) || /^Plan\b/i.test(raw)) return "Plan";
+      if (/^Completed\b/i.test(raw)) return "Done";
+      const match = raw.match(/^(Working|Monitoring|Failed|Woke|Done)\b/);
+      return match ? match[1] : null;
+    }
+
+    function latestTurnSettled(thread) {
+      const latestTurn = thread?.latestTurn;
+      const sessionStatus = thread?.session?.status;
+      if (sessionStatus === "running" || sessionStatus === "starting") return false;
+      if (latestTurn?.status === "completed" || latestTurn?.completedAt) return true;
+      return latestTurn == null && sessionStatus !== "error";
+    }
+
+    function planReadyFromThread(thread) {
       return (
-        [...statusRoot.querySelectorAll('[role="status"]')]
-          .map((node) => node.textContent.trim())
-          .find((label) => THREAD_STATUSES.has(label)) ?? null
+        thread?.hasPendingUserInput !== true &&
+        thread?.interactionMode === "plan" &&
+        thread?.hasActionableProposedPlan === true &&
+        latestTurnSettled(thread)
       );
+    }
+
+    function cardStatus(row) {
+      const statusRoot = context.activeCardParts(row)?.top ?? row;
+      for (const node of statusRoot.querySelectorAll('[role="status"]')) {
+        const label = statusLabel(node);
+        if (label) return label;
+      }
+      return null;
+    }
+
+    function resolveStatus(row, thread) {
+      const fromCard = cardStatus(row);
+      if (fromCard === "Approval" || thread?.hasPendingApprovals === true) return "Approval";
+      if (fromCard === "Input" || thread?.hasPendingUserInput === true) return "Input";
+      if (fromCard === "Working" || fromCard === "Monitoring") return fromCard;
+      if (thread?.session?.status === "running" || thread?.session?.status === "starting") {
+        return "Working";
+      }
+      if (fromCard === "Failed" || thread?.session?.status === "error") return "Failed";
+      if (fromCard === "Plan" || planReadyFromThread(thread)) return "Plan";
+      return fromCard;
+    }
+
+    function status(row) {
+      const thread = context.findReactRowProps(row)?.thread;
+      return resolveStatus(row, thread);
     }
 
     function snapshot(row, active) {
@@ -57,7 +108,7 @@
       const thread = props?.thread;
       if (!thread?.id) return null;
 
-      const currentStatus = status(row);
+      const currentStatus = resolveStatus(row, thread);
       return {
         active,
         key: `${thread.environmentId ?? "local"}:${thread.id}`,
@@ -66,6 +117,7 @@
         title: thread.title?.trim() || "Untitled thread",
         viewing: props.isActive === true,
         working: BUSY_STATUSES.has(currentStatus),
+        attention: ATTENTION_STATUSES.has(currentStatus) ? currentStatus : null,
       };
     }
 
@@ -306,10 +358,14 @@
       try {
         const currentStatus = thread.status ?? "Ready";
         closeDesktopNotification(thread.key);
-        const notification = new window.Notification("Thread stopped working", {
+        const copy = NOTIFICATION_COPY[currentStatus] ?? {
+          title: "Thread stopped working",
+          kind: "stopped",
+        };
+        const notification = new window.Notification(copy.title, {
           body: `${thread.title}\n${thread.project} · ${currentStatus}`,
           silent: sound !== "system",
-          tag: `t3-thread-stopped-${thread.key}`,
+          tag: `t3-thread-${copy.kind}-${thread.key}`,
         });
         desktopNotifications.set(thread.key, notification);
         void playSound();
@@ -346,14 +402,19 @@
           clearBadge(current.key);
         }
 
-        const stopped = previous?.active && previous.working && !current.working;
+        const attentionChanged =
+          current.active &&
+          current.attention !== null &&
+          previous != null &&
+          previous.attention !== current.attention;
         const suppressionExpiresAt = suppressedStops.get(current.key) ?? 0;
-        const stopWasSuppressed = stopped && suppressionExpiresAt >= Date.now();
-        if (stopped || suppressionExpiresAt < Date.now()) {
+        const attentionWasSuppressed =
+          attentionChanged && suppressionExpiresAt >= Date.now();
+        if (attentionChanged || suppressionExpiresAt < Date.now()) {
           suppressedStops.delete(current.key);
         }
 
-        if (enabled && stopped && !stopWasSuppressed && !becameViewed) {
+        if (enabled && attentionChanged && !attentionWasSuppressed && !becameViewed) {
           badges.set(current.key, current);
           void syncAppBadge();
           show(current);
@@ -407,7 +468,7 @@
         return false;
       }
       new window.Notification("T3 notifications are working", {
-        body: "You will be notified when an active thread stops working.",
+        body: "You will be notified for Approval, Input, Plan, Failed, and Done.",
         silent: sound !== "system",
         tag: "t3-thread-notification-test",
       });

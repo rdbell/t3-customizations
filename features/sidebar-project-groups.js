@@ -300,7 +300,7 @@
 
       for (const row of rows) {
         const status = context.notifications.status(row);
-        if (["Approval", "Input", "Failed", "Woke"].includes(status)) attention++;
+        if (["Approval", "Input", "Plan", "Failed", "Woke"].includes(status)) attention++;
         else if (status === "Done") done++;
         else if (status === "Working" || status === "Monitoring") working++;
       }
@@ -363,6 +363,7 @@
         item = document.createElement("li");
         item.setAttribute(HEADING, "section");
         item.setAttribute(HEADING_KEY, headingKey);
+        item.setAttribute("data-thread-selection-safe", "");
 
         const name = document.createElement("span");
         name.setAttribute("data-name", "");
@@ -390,6 +391,7 @@
         item = document.createElement("li");
         item.setAttribute(HEADING, "project");
         item.setAttribute(HEADING_KEY, headingKey);
+        item.setAttribute("data-thread-selection-safe", "");
 
         const button = document.createElement("button");
         button.type = "button";
@@ -538,12 +540,30 @@
       }
     }
 
+    function findByTestId(children, testId) {
+      return children.find((child) => child.matches?.(`[data-testid="${testId}"]`)) ?? null;
+    }
+
     function apply() {
-      clear({ preserveHeadings: true });
       const list = context.findThreadList();
-      if (!list) return;
+      if (!list) {
+        clear({ preserveHeadings: true });
+        return;
+      }
 
       const children = [...list.children];
+      if (
+        children.some(
+          (child) =>
+            child.matches?.(
+              '[data-testid="sidebar-pinned-header"], [data-testid="sidebar-pinned-divider"]',
+            ) && (child.children?.length ?? 0) > 0,
+        )
+      ) {
+        return;
+      }
+
+      clear({ preserveHeadings: true });
       const existingHeadings = children.filter((child) => child.hasAttribute(HEADING));
       const headings = {
         byKey: new Map(
@@ -554,29 +574,51 @@
         ),
         used: new Set(),
       };
-      const pinnedList = list.querySelector(':scope > li ul[aria-label="Pinned threads"]');
-      const pinnedWrapper = pinnedList?.closest("li") ?? null;
-      const pinnedDivider = children.find((child) =>
-        child.matches('[data-testid="sidebar-pinned-divider"]'),
-      );
-      const pinnedRows = pinnedList
-        ? [...pinnedList.children].filter((child) => child.matches("li[data-thread-item]"))
+      let legacyPinnedList = null;
+      for (const child of children) {
+        const nested = child.querySelector?.('ul[aria-label="Pinned threads"]');
+        if (nested && nested !== list) {
+          legacyPinnedList = nested;
+          break;
+        }
+      }
+      const legacyPinnedWrapper = legacyPinnedList?.closest("li") ?? null;
+      const legacyPinnedRows = legacyPinnedList
+        ? [...legacyPinnedList.children].filter((child) => child.matches("li[data-thread-item]"))
         : [];
-      const pinnedSet = new Set(pinnedRows);
       const directRows = children.filter((child) => child.matches("li[data-thread-item]"));
-      const rows = [...pinnedRows, ...directRows];
+      const seenRows = new Set();
+      const rows = [];
+      for (const row of [...legacyPinnedRows, ...directRows]) {
+        if (seenRows.has(row)) continue;
+        seenRows.add(row);
+        rows.push(row);
+      }
+      const pinnedSet = new Set(
+        rows.filter((row) => legacyPinnedRows.includes(row) || context.isPinned?.(row)),
+      );
       const active = rows.filter((row) => context.rowSection(row) === "active");
       const snoozed = rows.filter((row) => context.rowSection(row) === "snoozed");
       const settled = rows.filter((row) => context.rowSection(row) === "settled");
       const rowSet = new Set(rows);
       context.notifications.update(rows, active);
 
-      const snoozedHeader = children.find((child) =>
-        child.querySelector?.('[data-testid="sidebar-snoozed-shelf-toggle"]'),
-      );
-      const settledHeader = children.find((child) =>
-        child.querySelector?.('[data-testid="sidebar-settled-shelf-toggle"]'),
-      );
+      const pinnedHeader = findByTestId(children, "sidebar-pinned-header");
+      const pinnedDivider = findByTestId(children, "sidebar-pinned-divider");
+      const activePlaceholder = findByTestId(children, "sidebar-active-placeholder");
+      const settledPlaceholder = findByTestId(children, "sidebar-settled-placeholder");
+      const snoozedHeader =
+        findByTestId(children, "sidebar-snoozed-header") ??
+        children.find((child) =>
+          child.querySelector?.('[data-testid="sidebar-snoozed-shelf-toggle"]'),
+        ) ??
+        null;
+      const settledHeader =
+        findByTestId(children, "sidebar-settled-header") ??
+        children.find((child) =>
+          child.querySelector?.('[data-testid="sidebar-settled-shelf-toggle"]'),
+        ) ??
+        null;
       decorateShelfLabel(snoozedHeader, "Snoozed");
       decorateShelfLabel(settledHeader, "Settled");
       const showMore = children.find((child) =>
@@ -584,8 +626,11 @@
       );
       const special = new Set(
         [
-          pinnedWrapper,
+          legacyPinnedWrapper,
+          pinnedHeader,
           pinnedDivider,
+          activePlaceholder,
+          settledPlaceholder,
           snoozedHeader,
           settledHeader,
           showMore,
@@ -597,25 +642,25 @@
       let order = 0;
       const nextOrder = () => order++;
       for (const node of prefix) setOrder(node, nextOrder());
+      if (pinnedHeader) setOrder(pinnedHeader, nextOrder());
 
       if (active.length) {
-        if (pinnedWrapper && pinnedList) {
-          for (const node of [pinnedWrapper, pinnedList]) {
+        if (legacyPinnedWrapper && legacyPinnedList) {
+          for (const node of [legacyPinnedWrapper, legacyPinnedList]) {
             node.style.display = "contents";
             node.setAttribute(FLATTENED, "");
           }
-        }
-        if (pinnedDivider) {
-          pinnedDivider.style.display = "none";
-          pinnedDivider.setAttribute(FLATTENED, "");
         }
         makeSectionHeading("Active", active.length, nextOrder(), list, headings);
         renderProjectGroups("Active", active, list, nextOrder, headings, pinnedSet);
       }
 
+      if (pinnedDivider) setOrder(pinnedDivider, nextOrder());
+      if (activePlaceholder) setOrder(activePlaceholder, nextOrder());
       if (snoozedHeader) setOrder(snoozedHeader, nextOrder());
       renderProjectGroups("Snoozed", snoozed, list, nextOrder, headings, pinnedSet);
       if (settledHeader) setOrder(settledHeader, nextOrder());
+      if (settledPlaceholder) setOrder(settledPlaceholder, nextOrder());
       renderProjectGroups("Settled", settled, list, nextOrder, headings, pinnedSet);
       if (showMore) setOrder(showMore, nextOrder());
       for (const heading of existingHeadings) {

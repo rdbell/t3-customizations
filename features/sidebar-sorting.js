@@ -112,7 +112,7 @@
 
     function attentionRank(row) {
       const status = context.notifications.status(row);
-      if (["Approval", "Input", "Failed", "Woke"].includes(status)) return 0;
+      if (["Approval", "Input", "Plan", "Failed", "Woke"].includes(status)) return 0;
       if (status === "Done") return 1;
       if (status === "Working" || status === "Monitoring") return 3;
       return 2;
@@ -126,7 +126,9 @@
     }
 
     function isPinned(row) {
-      return context.findReactRowProps(row)?.thread?.pinnedAt != null;
+      if (typeof context.isPinned === "function") return context.isPinned(row);
+      if (context.findReactRowProps(row)?.thread?.pinnedAt != null) return true;
+      return Boolean(row.querySelector?.('[aria-label="Unpin thread"], [aria-label="Pinned"]'));
     }
 
     function compareGroups(left, right) {
@@ -202,7 +204,8 @@
       const pinned = [];
       const unpinned = [];
       for (const row of rows) {
-        const rowIsPinned = section === "Active" ? pinnedRows.has(row) : isPinned(row);
+        const rowIsPinned =
+          section === "Active" ? pinnedRows.has(row) || isPinned(row) : isPinned(row);
         (rowIsPinned ? pinned : unpinned).push(row);
       }
       return [...stableSort(pinned, compare), ...stableSort(unpinned, compare)];

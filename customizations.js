@@ -4,7 +4,7 @@
  * Run copy-customization.sh, then paste the copied payload into T3 Code's
  * DevTools console. Re-running it replaces the previous instance. The
  * customization lasts until the renderer reloads.
- * Tested against T3 Code 0.0.37.
+ * Tested against T3 Code 0.0.40.
  */
 (() => {
   const GLOBAL = "__t3ProjectGroupedSections";
@@ -50,6 +50,7 @@
     "Monitoring",
     "Approval",
     "Input",
+    "Plan",
     "Failed",
     "Woke",
     "Done",
@@ -65,8 +66,8 @@
     sortThreads(rows, section, pinnedRows = new Set()) {
       if (section !== "Active") return [...rows];
       return [
-        ...rows.filter((row) => pinnedRows.has(row)),
-        ...rows.filter((row) => !pinnedRows.has(row)),
+        ...rows.filter((row) => pinnedRows.has(row) || isPinned(row)),
+        ...rows.filter((row) => !pinnedRows.has(row) && !isPinned(row)),
       ];
     },
   };
@@ -84,6 +85,7 @@
   const sorting = selected.sidebarSorting
     ? featureFactories.sidebarSorting({
         findReactRowProps,
+        isPinned,
         notifications: notifications ?? emptyNotifications,
         schedule,
       })
@@ -104,6 +106,7 @@
     ? featureFactories.sidebarProjectGroups({
         activeCardParts,
         findThreadList,
+        isPinned,
         notifications: notifications ?? emptyNotifications,
         projectName,
         rowSection,
@@ -123,8 +126,12 @@
           (child) =>
             child.matches("li[data-thread-item]") ||
             child.hasAttribute("data-t3-project-group-heading") ||
-            child.querySelector?.('[data-testid="sidebar-snoozed-shelf-toggle"]') ||
-            child.querySelector?.('[data-testid="sidebar-settled-shelf-toggle"]'),
+            child.matches?.(
+              '[data-testid="sidebar-pinned-header"], [data-testid="sidebar-draft-divider"]',
+            ) ||
+            child.querySelector?.(
+              '[data-testid="sidebar-draft-row"], [data-testid="sidebar-snoozed-shelf-toggle"], [data-testid="sidebar-settled-shelf-toggle"]',
+            ),
         ),
       );
   }
@@ -184,6 +191,13 @@
     return null;
   }
 
+  function isPinned(row) {
+    if (findReactRowProps(row)?.thread?.pinnedAt != null) return true;
+    return Boolean(
+      row.querySelector('[aria-label="Unpin thread"], [aria-label="Pinned"]'),
+    );
+  }
+
   function activeCardParts(row) {
     const card = row.querySelector('[data-testid="sidebar-row-card"]');
     const content = card?.firstElementChild ?? null;
@@ -198,11 +212,40 @@
   }
 
   function threadStatus(row) {
-    return (
-      [...row.querySelectorAll('[role="status"]')]
-        .map((node) => node.textContent.trim())
-        .find((label) => THREAD_STATUSES.has(label)) ?? null
-    );
+    const thread = findReactRowProps(row)?.thread;
+    const statusRoot = activeCardParts(row)?.top ?? row;
+    let fromCard = null;
+    for (const node of statusRoot.querySelectorAll('[role="status"]')) {
+      const raw = node.textContent.trim();
+      if (THREAD_STATUSES.has(raw)) fromCard = raw;
+      else if (/^Pending Approval\b/i.test(raw) || /^Approval\b/i.test(raw)) fromCard = "Approval";
+      else if (/^Awaiting Input\b/i.test(raw) || /^Input\b/i.test(raw)) fromCard = "Input";
+      else if (/^Plan Ready\b/i.test(raw) || /^Plan\b/i.test(raw)) fromCard = "Plan";
+      else if (/^Completed\b/i.test(raw)) fromCard = "Done";
+      else {
+        const match = raw.match(/^(Working|Monitoring|Failed|Woke|Done)\b/);
+        if (match) fromCard = match[1];
+      }
+      if (fromCard) break;
+    }
+    if (fromCard === "Approval" || thread?.hasPendingApprovals === true) return "Approval";
+    if (fromCard === "Input" || thread?.hasPendingUserInput === true) return "Input";
+    if (fromCard === "Working" || fromCard === "Monitoring") return fromCard;
+    if (thread?.session?.status === "running" || thread?.session?.status === "starting") {
+      return "Working";
+    }
+    if (fromCard === "Failed" || thread?.session?.status === "error") return "Failed";
+    if (
+      fromCard === "Plan" ||
+      (thread?.hasPendingUserInput !== true &&
+        thread?.interactionMode === "plan" &&
+        thread?.hasActionableProposedPlan === true &&
+        thread?.session?.status !== "running" &&
+        thread?.session?.status !== "starting")
+    ) {
+      return "Plan";
+    }
+    return fromCard;
   }
 
   function updateText(node, value) {
@@ -245,7 +288,7 @@
       }
       if (record.type === "characterData") {
         return Boolean(
-          target?.closest('li[data-thread-item]') && target.closest('[role="status"]'),
+          target?.closest("li[data-thread-item]") && target.closest('[role="status"]'),
         );
       }
       return [...record.addedNodes, ...record.removedNodes].some(

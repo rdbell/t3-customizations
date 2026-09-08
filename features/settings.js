@@ -119,17 +119,20 @@
       if (!item) {
         const template = [...menu.querySelectorAll(':scope > li[data-sidebar="menu-item"]')].find(
           (candidate) =>
-            candidate.querySelector('[data-sidebar="menu-button"]')?.textContent.trim() ===
-            "General",
+            candidate
+              .querySelector(':scope > [data-sidebar="menu-button"]')
+              ?.textContent.trim() === "General",
         );
         if (!template) return null;
 
         item = template.cloneNode(true);
         item.setAttribute(NAV, "");
-        const button = item.querySelector('[data-sidebar="menu-button"]');
+        item.querySelector('[data-sidebar="menu-sub"]')?.remove();
+        const button = item.querySelector(':scope > [data-sidebar="menu-button"]');
         const templateIcon = button.querySelector(":scope > svg");
         templateIcon?.replaceWith(makeIcon(templateIcon));
-        context.updateText(button.querySelector(":scope > span:last-child"), "Customizations");
+        const label = [...button.querySelectorAll(":scope > span")].at(-1);
+        context.updateText(label, "Customizations");
         button.onclick = (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -140,7 +143,7 @@
       }
 
       item
-        .querySelector('[data-sidebar="menu-button"]')
+        .querySelector(':scope > [data-sidebar="menu-button"]')
         .setAttribute("data-active", String(active));
       return item;
     }
@@ -199,7 +202,12 @@
       const page = nativePage.cloneNode(false);
       page.removeAttribute(HIDDEN);
       page.setAttribute(PAGE, "");
-      page.setAttribute("data-settings-page-scroll", "");
+      if (nativePage.hasAttribute("data-settings-page-scroll")) {
+        page.setAttribute("data-settings-page-scroll", "");
+      }
+      if (nativePage.hasAttribute("data-settings-page-layout")) {
+        page.setAttribute("data-settings-page-layout", "");
+      }
 
       const nativeContainer = nativePage.firstElementChild;
       const container = nativeContainer
@@ -455,9 +463,13 @@
         }
       }
 
-      const nativePage = [...document.querySelectorAll("[data-settings-page-scroll]")].find(
-        (node) => !node.hasAttribute(PAGE),
-      );
+      const nativePage =
+        [...document.querySelectorAll("[data-settings-page-scroll]")].find(
+          (node) => !node.hasAttribute(PAGE),
+        ) ??
+        [...document.querySelectorAll("[data-settings-page-layout]")].find(
+          (node) => !node.hasAttribute(PAGE),
+        );
       if (!nativePage?.parentElement) return;
       nativePage.setAttribute(HIDDEN, "");
 
