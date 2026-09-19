@@ -459,6 +459,119 @@ async function testReadsWorkingPrefixFromLiveRegion() {
   assert.equal(harness.feature.status(row), "Working");
 }
 
+async function testOpenThreadCompletionNotifiesWhenWindowIsBackgrounded() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "open-background",
+    viewing: true,
+    status: "Working",
+    thread: {
+      latestTurn: { status: "in_progress", completedAt: null },
+      session: { status: "running" },
+    },
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = null;
+  row.props.thread.session = { status: "idle" };
+  row.props.thread.latestTurn = {
+    status: "completed",
+    completedAt: "2026-09-08T16:00:00.000Z",
+  };
+  harness.update();
+
+  assert.equal(harness.feature.status(row), null);
+  assert.equal(harness.feature.settings().badgeCount, 1);
+  assert.equal(harness.notificationInstances.length, 1);
+  assert.equal(harness.notificationInstances[0].title, "Thread finished");
+}
+
+async function testSameCompletedAtDoesNotNotifyAgain() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "same-completed",
+    viewing: true,
+    status: "Working",
+    thread: {
+      latestTurn: { status: "in_progress", completedAt: null },
+      session: { status: "running" },
+    },
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = null;
+  row.props.thread.session = { status: "idle" };
+  row.props.thread.latestTurn = {
+    status: "completed",
+    completedAt: "2026-09-08T16:00:00.000Z",
+  };
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 1);
+
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 1);
+  assert.equal(harness.feature.settings().badgeCount, 1);
+}
+
+async function testSelectedThreadNotifiesWhenWorkingLabelDisappears() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "selected-no-pill",
+    viewing: true,
+    status: "Working",
+    thread: {
+      latestTurn: { completedAt: "2026-09-08T16:00:00.000Z" },
+      session: { status: "running" },
+    },
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = null;
+  row.props.thread.session = { status: "idle" };
+  harness.update();
+
+  assert.equal(harness.feature.status(row), null);
+  assert.equal(harness.notificationInstances.length, 1);
+  assert.equal(harness.notificationInstances[0].title, "Thread finished");
+  assert.equal(harness.feature.settings().badgeCount, 1);
+}
+
+async function testUserStopOnSelectedThreadStillSuppressed() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "selected-stop",
+    viewing: true,
+    status: "Working",
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  harness.feature.acknowledge("test-environment:selected-stop", { suppressNextStop: true });
+  row.status = null;
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 0);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+}
+
+async function testSkippedBusyStillNotifiesOnCompletion() {
+  const harness = createHarness();
+  const row = harness.addRow({
+    id: "skipped-busy",
+    status: null,
+    thread: { latestTurn: { completedAt: "2026-09-08T15:00:00.000Z" } },
+  });
+  await harness.feature.enable();
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 0);
+
+  row.props.thread.latestTurn = { completedAt: "2026-09-08T16:00:00.000Z" };
+  harness.update();
+  assert.equal(harness.notificationInstances.at(-1).title, "Thread finished");
+}
+
 async function testPendingPermissionCannotUndoDisable() {
   const permissionRequest = deferred();
   const harness = createHarness({ permission: "default", permissionRequest });
@@ -487,6 +600,11 @@ async function main() {
   await testExistingAttentionOnFirstLoadDoesNotNotify();
   await testParsesNativeInputStatusLabels();
   await testReadsWorkingPrefixFromLiveRegion();
+  await testOpenThreadCompletionNotifiesWhenWindowIsBackgrounded();
+  await testSameCompletedAtDoesNotNotifyAgain();
+  await testSelectedThreadNotifiesWhenWorkingLabelDisappears();
+  await testUserStopOnSelectedThreadStillSuppressed();
+  await testSkippedBusyStillNotifiesOnCompletion();
   await testPendingPermissionCannotUndoDisable();
   console.log("Notification state tests passed.");
 }

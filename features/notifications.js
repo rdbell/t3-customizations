@@ -118,7 +118,18 @@
         viewing: props.isActive === true,
         working: BUSY_STATUSES.has(currentStatus),
         attention: ATTENTION_STATUSES.has(currentStatus) ? currentStatus : null,
+        completedAt: thread.latestTurn?.completedAt ?? null,
       };
+    }
+
+    function withHiddenCompletion(current, previous) {
+      if (current.attention != null || current.working || !current.active) return current;
+      if (previous == null) return current;
+      const completedAtChanged =
+        Boolean(current.completedAt) && previous.completedAt !== current.completedAt;
+      const leftBusyWithoutStatus = previous.working === true;
+      if (!completedAtChanged && !leftBusyWithoutStatus) return current;
+      return { ...current, status: "Done", attention: "Done" };
     }
 
     function findRowByThreadKey(key) {
@@ -392,11 +403,12 @@
       const currentKeys = new Set();
 
       for (const row of rows) {
-        const current = snapshot(row, activeSet.has(row));
+        let current = snapshot(row, activeSet.has(row));
         if (!current) continue;
 
         currentKeys.add(current.key);
         const previous = threadStates.get(current.key);
+        current = withHiddenCompletion(current, previous);
         const becameViewed = previous && !previous.viewing && current.viewing;
         if (badges.has(current.key) && (current.working || becameViewed)) {
           clearBadge(current.key);
