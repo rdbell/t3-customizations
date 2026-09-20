@@ -233,7 +233,10 @@
                     <h3 class="text-sm font-medium tracking-[-0.005em] text-foreground">Notification volume</h3>
                   </div>
                   <p class="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
-                    Set the playback level for codec.wav. Release the slider to preview it.
+                    T3's Settings → General → Behavior handles Approval, Input, Failed, and Done.
+                    This overlay still pings for Plan Ready and when the selected thread needs you
+                    while T3 is focused. Volume applies to those overlay sounds. Release the slider
+                    to preview codec.wav.
                   </p>
                 </div>
                 <div class="flex w-full shrink-0 items-center gap-3 sm:w-52 sm:justify-end">

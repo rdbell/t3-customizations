@@ -21,9 +21,6 @@ function createHarness(options = {}) {
   let visible = options.visible ?? true;
   const permissionRequest = options.permissionRequest ?? null;
   const notificationInstances = [];
-  const appBadgeValues = [];
-  const appBadgeOperations = [];
-  let clearAppBadgeCalls = 0;
   let scheduled = 0;
 
   class FakeNotification {
@@ -67,16 +64,7 @@ function createHarness(options = {}) {
     },
     setItem() {},
   };
-  const navigator = {
-    async clearAppBadge() {
-      clearAppBadgeCalls++;
-      appBadgeOperations.push(["clear"]);
-    },
-    async setAppBadge(value) {
-      appBadgeValues.push(value);
-      appBadgeOperations.push(["set", value]);
-    },
-  };
+  const navigator = {};
   const window = {
     __t3CustomizationFeatureFactories: {},
     Notification: FakeNotification,
@@ -176,13 +164,10 @@ function createHarness(options = {}) {
   }
 
   return {
-    appBadgeValues,
-    appBadgeOperations,
     feature,
     notificationInstances,
     permissionRequest,
     addRow,
-    clearAppBadgeCalls: () => clearAppBadgeCalls,
     scheduled: () => scheduled,
     setFocused(value) {
       focused = value;
@@ -194,115 +179,206 @@ function createHarness(options = {}) {
   };
 }
 
-async function testBackgroundCompletionAndRestart() {
-  const harness = createHarness();
-  const row = harness.addRow({ id: "background" });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.notificationInstances[0].title, "Thread finished");
-
-  row.status = "Working";
-  harness.update();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(harness.feature.settings().badgeCount, 0);
-  assert.equal(harness.notificationInstances[0].closed, true);
-  assert.deepEqual(harness.appBadgeOperations.at(-1), ["clear"]);
+function planThread() {
+  return {
+    interactionMode: "plan",
+    hasActionableProposedPlan: true,
+    latestTurn: { state: "completed", completedAt: "2026-09-08T00:00:00.000Z" },
+  };
 }
 
-async function testForegroundCompletionClearsWhenUserResponds() {
-  const harness = createHarness({ focused: true });
-  const row = harness.addRow({ id: "foreground", viewing: true });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.notificationInstances.length, 1);
-
-  assert.equal(harness.feature.acknowledgeViewedThread(), true);
-  assert.equal(harness.feature.settings().badgeCount, 0);
-  assert.equal(harness.notificationInstances[0].closed, true);
-}
-
-async function testReturningToViewedThreadAcknowledgesIt() {
+async function testNativeBackgroundStatusesDoNotOverlayNotify() {
   const harness = createHarness({ focused: false });
-  const row = harness.addRow({ id: "focus-return", viewing: true });
+  const done = harness.addRow({ id: "native-done" });
+  const input = harness.addRow({ id: "native-input", status: "Working" });
+  const failed = harness.addRow({ id: "native-failed", status: null });
   await harness.feature.enable();
   harness.update();
 
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-
-  harness.setFocused(true);
-  assert.equal(harness.feature.acknowledgeVisibleThread(), true);
-  assert.equal(harness.feature.settings().badgeCount, 0);
-  assert.equal(harness.notificationInstances[0].closed, true);
-}
-
-async function testOpeningAndSendingAcknowledge() {
-  const harness = createHarness({ focused: false });
-  const row = harness.addRow({ id: "open-and-send" });
-  await harness.feature.enable();
+  done.status = "Done";
+  input.status = "Input";
+  failed.status = "Failed";
   harness.update();
 
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-
-  row.props.isActive = true;
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 0);
-
-  row.status = "Working";
-  harness.update();
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.feature.acknowledgeViewedThread(), true);
-  assert.equal(harness.feature.settings().badgeCount, 0);
-}
-
-async function testUserInitiatedStopIsSuppressed() {
-  const harness = createHarness();
-  const row = harness.addRow({ id: "user-stop" });
-  await harness.feature.enable();
-  harness.update();
-
-  harness.feature.acknowledge("test-environment:user-stop", { suppressNextStop: true });
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 0);
   assert.equal(harness.notificationInstances.length, 0);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+  assert.equal(harness.feature.status(done), "Done");
+  assert.equal(harness.feature.status(input), "Input");
+  assert.equal(harness.feature.status(failed), "Failed");
 }
 
-async function testDisableStopsBadgesAndDesktopNotifications() {
-  const harness = createHarness();
-  const row = harness.addRow({ id: "disabled" });
+async function testFocusedUnselectedStatusesDoNotOverlayNotify() {
+  const harness = createHarness({ focused: true });
+  const row = harness.addRow({ id: "other-thread", viewing: false });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = "Done";
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 0);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+}
+
+async function testPlanReadyNotifiesEvenInBackground() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "plan-ready",
+    status: null,
+    thread: planThread(),
+  });
+  await harness.feature.enable();
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 0);
+
+  row.props.thread.hasActionableProposedPlan = false;
+  harness.update();
+  row.props.thread.hasActionableProposedPlan = true;
+  harness.update();
+
+  assert.equal(harness.feature.status(row), "Plan");
+  assert.equal(harness.notificationInstances.at(-1).title, "Plan is ready");
+  assert.equal(harness.feature.settings().badgeCount, 1);
+}
+
+async function testPlanReadyOutranksDonePill() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "plan-over-done",
+    status: "Done",
+    thread: planThread(),
+  });
+  await harness.feature.enable();
+  harness.update();
+  assert.equal(harness.feature.status(row), "Plan");
+  assert.equal(harness.notificationInstances.length, 0);
+
+  row.props.thread.hasActionableProposedPlan = false;
+  harness.update();
+  row.props.thread.hasActionableProposedPlan = true;
+  harness.update();
+  assert.equal(harness.notificationInstances.at(-1).title, "Plan is ready");
+}
+
+async function testFocusedSelectedThreadNotifiesForNativeStatuses() {
+  const harness = createHarness({ focused: true });
+  const row = harness.addRow({ id: "focused-selected", viewing: true });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = "Done";
+  harness.update();
+  assert.equal(harness.notificationInstances.at(-1).title, "Thread finished");
+  assert.equal(harness.feature.settings().badgeCount, 1);
+
+  assert.equal(harness.feature.acknowledgeViewedThread(), true);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+  assert.equal(harness.notificationInstances[0].closed, true);
+
+  row.status = "Working";
+  harness.update();
+  row.status = "Input";
+  harness.update();
+  assert.equal(harness.notificationInstances.at(-1).title, "Thread needs your input");
+}
+
+async function testBackgroundSelectedThreadLeavesNativeStatusesToT3() {
+  const harness = createHarness({ focused: false });
+  const row = harness.addRow({
+    id: "selected-background",
+    viewing: true,
+    status: "Working",
+    thread: {
+      latestTurn: { state: "in_progress", completedAt: null },
+      session: { status: "running" },
+    },
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = null;
+  row.props.thread.session = { status: "idle" };
+  row.props.thread.latestTurn = {
+    state: "completed",
+    completedAt: "2026-09-08T16:00:00.000Z",
+  };
+  harness.update();
+
+  assert.equal(harness.feature.status(row), null);
+  assert.equal(harness.notificationInstances.length, 0);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+}
+
+async function testFocusedSelectedHiddenCompletionNotifies() {
+  const harness = createHarness({ focused: true });
+  const row = harness.addRow({
+    id: "selected-no-pill",
+    viewing: true,
+    status: "Working",
+    thread: {
+      latestTurn: { completedAt: "2026-09-08T16:00:00.000Z" },
+      session: { status: "running" },
+    },
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  row.status = null;
+  row.props.thread.session = { status: "idle" };
+  harness.update();
+
+  assert.equal(harness.feature.status(row), null);
+  assert.equal(harness.notificationInstances.at(-1).title, "Thread finished");
+  assert.equal(harness.feature.settings().badgeCount, 1);
+
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 1);
+}
+
+async function testUserStopOnFocusedSelectedThreadStillSuppressed() {
+  const harness = createHarness({ focused: true });
+  const row = harness.addRow({
+    id: "selected-stop",
+    viewing: true,
+    status: "Working",
+  });
+  await harness.feature.enable();
+  harness.update();
+
+  harness.feature.acknowledge("test-environment:selected-stop", { suppressNextStop: true });
+  row.status = "Done";
+  harness.update();
+  assert.equal(harness.notificationInstances.length, 0);
+  assert.equal(harness.feature.settings().badgeCount, 0);
+}
+
+async function testDisableStopsOverlayNotifications() {
+  const harness = createHarness({ focused: true });
+  const row = harness.addRow({
+    id: "disabled",
+    viewing: true,
+    status: null,
+    thread: planThread(),
+  });
   await harness.feature.enable();
   harness.update();
 
   harness.feature.disable();
-  row.status = "Done";
+  row.props.thread.hasActionableProposedPlan = false;
+  harness.update();
+  row.props.thread.hasActionableProposedPlan = true;
   harness.update();
   assert.equal(harness.feature.settings().enabled, false);
   assert.equal(harness.feature.settings().desktopEnabled, false);
   assert.equal(harness.feature.settings().badgeCount, 0);
   assert.equal(harness.notificationInstances.length, 0);
 
-  row.status = "Working";
-  harness.update();
   await harness.feature.enable();
-  row.status = "Done";
+  row.props.thread.hasActionableProposedPlan = false;
+  harness.update();
+  row.props.thread.hasActionableProposedPlan = true;
   harness.update();
   assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.notificationInstances.length, 1);
+  assert.equal(harness.notificationInstances.at(-1).title, "Plan is ready");
 }
 
 async function testIgnoresNonThreadStatusLabels() {
@@ -318,122 +394,13 @@ async function testIgnoresNonThreadStatusLabels() {
   row.status = "Done";
   harness.update();
   assert.equal(harness.feature.status(row), "Done");
-  assert.equal(harness.feature.settings().badgeCount, 1);
-}
-
-async function testNeedsInputFromIdleAndFromWorking() {
-  const harness = createHarness();
-  const idle = harness.addRow({ id: "idle-input", status: "Done" });
-  const working = harness.addRow({ id: "working-input" });
-  await harness.feature.enable();
-  harness.update();
-
-  idle.status = "Input";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.notificationInstances.at(-1).title, "Thread needs your input");
-  assert.match(harness.notificationInstances.at(-1).options.body, /Input/);
-
-  working.status = "Approval";
-  harness.update();
-  assert.equal(harness.feature.settings().badgeCount, 2);
-  assert.equal(harness.notificationInstances.at(-1).title, "Thread needs approval");
-  assert.match(harness.notificationInstances.at(-1).options.body, /Approval/);
-}
-
-async function testNeedsInputDoesNotNotifyAgainOnSameStatus() {
-  const harness = createHarness();
-  const row = harness.addRow({ id: "same-input", status: "Done" });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = "Input";
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 1);
-
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.feature.settings().badgeCount, 1);
-}
-
-async function testDoneAfterAcknowledgedInputNotifiesFinished() {
-  const harness = createHarness();
-  const row = harness.addRow({ id: "input-then-done", status: "Done" });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = "Input";
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.notificationInstances[0].title, "Thread needs your input");
-
-  row.props.isActive = true;
-  harness.update();
   assert.equal(harness.feature.settings().badgeCount, 0);
-
-  row.status = "Done";
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 2);
-  assert.equal(harness.notificationInstances[1].title, "Thread finished");
-  assert.equal(harness.feature.settings().badgeCount, 1);
-}
-
-async function testFailedAndPlanNotifyWithDistinctTitles() {
-  const harness = createHarness();
-  const failed = harness.addRow({ id: "failed-idle", status: null });
-  const plan = harness.addRow({
-    id: "plan-ready",
-    status: null,
-    thread: {
-      interactionMode: "plan",
-      hasActionableProposedPlan: true,
-      latestTurn: { status: "completed", completedAt: "2026-09-08T00:00:00.000Z" },
-    },
-  });
-  await harness.feature.enable();
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 0);
-
-  failed.status = "Failed";
-  harness.update();
-  assert.equal(harness.notificationInstances.at(-1).title, "Thread failed");
-  assert.equal(harness.feature.status(failed), "Failed");
-
-  plan.props.thread.hasActionableProposedPlan = false;
-  harness.update();
-  plan.props.thread.hasActionableProposedPlan = true;
-  harness.update();
-  assert.equal(harness.feature.status(plan), "Plan");
-  assert.equal(harness.notificationInstances.at(-1).title, "Plan is ready");
-}
-
-async function testPlanReadyOutranksDonePill() {
-  const harness = createHarness();
-  const row = harness.addRow({
-    id: "plan-over-done",
-    status: "Done",
-    thread: {
-      interactionMode: "plan",
-      hasActionableProposedPlan: true,
-      latestTurn: { completedAt: "2026-09-08T00:00:00.000Z" },
-    },
-  });
-  await harness.feature.enable();
-  harness.update();
-  assert.equal(harness.feature.status(row), "Plan");
-  assert.equal(harness.notificationInstances.length, 0);
-
-  row.props.thread.hasActionableProposedPlan = false;
-  harness.update();
-  row.props.thread.hasActionableProposedPlan = true;
-  harness.update();
-  assert.equal(harness.notificationInstances.at(-1).title, "Plan is ready");
 }
 
 async function testExistingAttentionOnFirstLoadDoesNotNotify() {
-  const harness = createHarness();
-  harness.addRow({ id: "already-done", status: "Done" });
-  harness.addRow({ id: "already-input", status: "Input" });
+  const harness = createHarness({ focused: true });
+  harness.addRow({ id: "already-done", viewing: true, status: "Done" });
+  harness.addRow({ id: "already-plan", status: null, thread: planThread() });
   await harness.feature.enable();
   harness.update();
   assert.equal(harness.notificationInstances.length, 0);
@@ -459,117 +426,17 @@ async function testReadsWorkingPrefixFromLiveRegion() {
   assert.equal(harness.feature.status(row), "Working");
 }
 
-async function testOpenThreadCompletionNotifiesWhenWindowIsBackgrounded() {
-  const harness = createHarness({ focused: false });
-  const row = harness.addRow({
-    id: "open-background",
-    viewing: true,
-    status: "Working",
-    thread: {
-      latestTurn: { status: "in_progress", completedAt: null },
-      session: { status: "running" },
-    },
-  });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = null;
-  row.props.thread.session = { status: "idle" };
-  row.props.thread.latestTurn = {
-    status: "completed",
-    completedAt: "2026-09-08T16:00:00.000Z",
-  };
-  harness.update();
-
-  assert.equal(harness.feature.status(row), null);
-  assert.equal(harness.feature.settings().badgeCount, 1);
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.notificationInstances[0].title, "Thread finished");
-}
-
-async function testSameCompletedAtDoesNotNotifyAgain() {
-  const harness = createHarness({ focused: false });
-  const row = harness.addRow({
-    id: "same-completed",
-    viewing: true,
-    status: "Working",
-    thread: {
-      latestTurn: { status: "in_progress", completedAt: null },
-      session: { status: "running" },
-    },
-  });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = null;
-  row.props.thread.session = { status: "idle" };
-  row.props.thread.latestTurn = {
-    status: "completed",
-    completedAt: "2026-09-08T16:00:00.000Z",
-  };
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 1);
-
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.feature.settings().badgeCount, 1);
-}
-
-async function testSelectedThreadNotifiesWhenWorkingLabelDisappears() {
-  const harness = createHarness({ focused: false });
-  const row = harness.addRow({
-    id: "selected-no-pill",
-    viewing: true,
-    status: "Working",
-    thread: {
-      latestTurn: { completedAt: "2026-09-08T16:00:00.000Z" },
-      session: { status: "running" },
-    },
-  });
-  await harness.feature.enable();
-  harness.update();
-
-  row.status = null;
-  row.props.thread.session = { status: "idle" };
-  harness.update();
-
-  assert.equal(harness.feature.status(row), null);
-  assert.equal(harness.notificationInstances.length, 1);
-  assert.equal(harness.notificationInstances[0].title, "Thread finished");
-  assert.equal(harness.feature.settings().badgeCount, 1);
-}
-
-async function testUserStopOnSelectedThreadStillSuppressed() {
-  const harness = createHarness({ focused: false });
-  const row = harness.addRow({
-    id: "selected-stop",
-    viewing: true,
-    status: "Working",
-  });
-  await harness.feature.enable();
-  harness.update();
-
-  harness.feature.acknowledge("test-environment:selected-stop", { suppressNextStop: true });
-  row.status = null;
-  harness.update();
-  assert.equal(harness.notificationInstances.length, 0);
-  assert.equal(harness.feature.settings().badgeCount, 0);
-}
-
-async function testSkippedBusyStillNotifiesOnCompletion() {
+async function testFailedFromLatestTurnState() {
   const harness = createHarness();
   const row = harness.addRow({
-    id: "skipped-busy",
+    id: "turn-error",
     status: null,
-    thread: { latestTurn: { completedAt: "2026-09-08T15:00:00.000Z" } },
+    thread: { latestTurn: { state: "error" } },
   });
   await harness.feature.enable();
   harness.update();
+  assert.equal(harness.feature.status(row), "Failed");
   assert.equal(harness.notificationInstances.length, 0);
-
-  row.props.thread.latestTurn = { completedAt: "2026-09-08T16:00:00.000Z" };
-  harness.update();
-  assert.equal(harness.notificationInstances.at(-1).title, "Thread finished");
 }
 
 async function testPendingPermissionCannotUndoDisable() {
@@ -585,26 +452,20 @@ async function testPendingPermissionCannotUndoDisable() {
 }
 
 async function main() {
-  await testBackgroundCompletionAndRestart();
-  await testForegroundCompletionClearsWhenUserResponds();
-  await testReturningToViewedThreadAcknowledgesIt();
-  await testOpeningAndSendingAcknowledge();
-  await testUserInitiatedStopIsSuppressed();
-  await testDisableStopsBadgesAndDesktopNotifications();
-  await testIgnoresNonThreadStatusLabels();
-  await testNeedsInputFromIdleAndFromWorking();
-  await testNeedsInputDoesNotNotifyAgainOnSameStatus();
-  await testDoneAfterAcknowledgedInputNotifiesFinished();
-  await testFailedAndPlanNotifyWithDistinctTitles();
+  await testNativeBackgroundStatusesDoNotOverlayNotify();
+  await testFocusedUnselectedStatusesDoNotOverlayNotify();
+  await testPlanReadyNotifiesEvenInBackground();
   await testPlanReadyOutranksDonePill();
+  await testFocusedSelectedThreadNotifiesForNativeStatuses();
+  await testBackgroundSelectedThreadLeavesNativeStatusesToT3();
+  await testFocusedSelectedHiddenCompletionNotifies();
+  await testUserStopOnFocusedSelectedThreadStillSuppressed();
+  await testDisableStopsOverlayNotifications();
+  await testIgnoresNonThreadStatusLabels();
   await testExistingAttentionOnFirstLoadDoesNotNotify();
   await testParsesNativeInputStatusLabels();
   await testReadsWorkingPrefixFromLiveRegion();
-  await testOpenThreadCompletionNotifiesWhenWindowIsBackgrounded();
-  await testSameCompletedAtDoesNotNotifyAgain();
-  await testSelectedThreadNotifiesWhenWorkingLabelDisappears();
-  await testUserStopOnSelectedThreadStillSuppressed();
-  await testSkippedBusyStillNotifiesOnCompletion();
+  await testFailedFromLatestTurnState();
   await testPendingPermissionCannotUndoDisable();
   console.log("Notification state tests passed.");
 }

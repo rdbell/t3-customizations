@@ -4,7 +4,9 @@
  * Run copy-customization.sh, then paste the copied payload into T3 Code's
  * DevTools console. Re-running it replaces the previous instance. The
  * customization lasts until the renderer reloads.
- * Tested against T3 Code 0.0.40.
+ * Tested against T3 Code 0.0.42. Native thread notifications cover
+ * Approval, Input, Failed, and Done. This overlay adds Plan Ready and a
+ * ping when the selected thread needs you while the window is focused.
  */
 (() => {
   const GLOBAL = "__t3ProjectGroupedSections";
@@ -152,18 +154,31 @@
       seen.add(fiber);
 
       const props = fiber.memoizedProps ?? fiber.pendingProps;
-      if (
-        props &&
-        typeof props === "object" &&
-        Object.hasOwn(props, "projectTitle") &&
-        props.thread
-      ) {
-        return props;
-      }
+      if (isThreadRowProps(props)) return props;
 
       queue.push(fiber.return, fiber.alternate);
     }
     return null;
+  }
+
+  function isThreadRowProps(props) {
+    return Boolean(
+      props &&
+        typeof props === "object" &&
+        props.thread &&
+        (Object.hasOwn(props, "projectTitle") ||
+          Object.hasOwn(props, "projectDisplayName") ||
+          Object.hasOwn(props, "project")),
+    );
+  }
+
+  function rowProjectName(props) {
+    const fromTitle = props?.projectTitle?.trim();
+    if (fromTitle) return fromTitle;
+    const fromDisplay = props?.projectDisplayName?.trim();
+    if (fromDisplay) return fromDisplay;
+    const fromProject = props?.project?.name?.trim?.() || props?.project?.title?.trim?.();
+    return fromProject || null;
   }
 
   function fallbackCardProject(row) {
@@ -178,7 +193,7 @@
 
   function projectName(row) {
     return (
-      findReactRowProps(row)?.projectTitle?.trim() ||
+      rowProjectName(findReactRowProps(row)) ||
       fallbackCardProject(row) ||
       "Unknown project"
     );
@@ -234,7 +249,13 @@
     if (thread?.session?.status === "running" || thread?.session?.status === "starting") {
       return "Working";
     }
-    if (fromCard === "Failed" || thread?.session?.status === "error") return "Failed";
+    if (
+      fromCard === "Failed" ||
+      thread?.session?.status === "error" ||
+      thread?.latestTurn?.state === "error"
+    ) {
+      return "Failed";
+    }
     if (
       fromCard === "Plan" ||
       (thread?.hasPendingUserInput !== true &&

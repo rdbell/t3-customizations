@@ -1,4 +1,4 @@
-/** Desktop notifications, project badges, sound playback, and persisted sound settings. */
+/** Overlay desktop notifications for Plan Ready and the focused selected thread. */
 (() => {
   const registry = (window.__t3CustomizationFeatureFactories ??= {});
 
@@ -13,6 +13,7 @@
       ...ATTENTION_STATUSES,
       "Woke",
     ]);
+    const NATIVE_ATTENTION_STATUSES = new Set(["Approval", "Input", "Failed", "Done"]);
     const NOTIFICATION_COPY = {
       Approval: { title: "Thread needs approval", kind: "approval" },
       Input: { title: "Thread needs your input", kind: "input" },
@@ -29,7 +30,6 @@
     const badges = new Map();
     const desktopNotifications = new Map();
     const suppressedStops = new Map();
-    let appBadgeSync = Promise.resolve();
     let sound = (() => {
       try {
         const stored = localStorage.getItem(SOUND_STORAGE_KEY);
@@ -63,7 +63,13 @@
       const latestTurn = thread?.latestTurn;
       const sessionStatus = thread?.session?.status;
       if (sessionStatus === "running" || sessionStatus === "starting") return false;
-      if (latestTurn?.status === "completed" || latestTurn?.completedAt) return true;
+      if (
+        latestTurn?.status === "completed" ||
+        latestTurn?.state === "completed" ||
+        latestTurn?.completedAt
+      ) {
+        return true;
+      }
       return latestTurn == null && sessionStatus !== "error";
     }
 
@@ -93,7 +99,13 @@
       if (thread?.session?.status === "running" || thread?.session?.status === "starting") {
         return "Working";
       }
-      if (fromCard === "Failed" || thread?.session?.status === "error") return "Failed";
+      if (
+        fromCard === "Failed" ||
+        thread?.session?.status === "error" ||
+        thread?.latestTurn?.state === "error"
+      ) {
+        return "Failed";
+      }
       if (fromCard === "Plan" || planReadyFromThread(thread)) return "Plan";
       return fromCard;
     }
@@ -112,7 +124,11 @@
       return {
         active,
         key: `${thread.environmentId ?? "local"}:${thread.id}`,
-        project: props.projectTitle?.trim() || context.projectName(row),
+        project:
+          props.projectTitle?.trim() ||
+          props.projectDisplayName?.trim() ||
+          props.project?.name?.trim?.() ||
+          context.projectName(row),
         status: currentStatus,
         title: thread.title?.trim() || "Untitled thread",
         viewing: props.isActive === true,
@@ -145,7 +161,7 @@
 
     function settings() {
       return {
-        appBadgeSupported: typeof navigator.setAppBadge === "function",
+        appBadgeSupported: false,
         badgeCount: badges.size,
         desktopEnabled,
         enabled,
@@ -155,24 +171,18 @@
       };
     }
 
-    function syncAppBadge() {
-      const count = badges.size;
-      appBadgeSync = appBadgeSync.then(async () => {
-        try {
-          if (count > 0 && typeof navigator.setAppBadge === "function") {
-            await navigator.setAppBadge(count);
-          } else if (count === 0) {
-            if (typeof navigator.clearAppBadge === "function") {
-              await navigator.clearAppBadge();
-            } else if (typeof navigator.setAppBadge === "function") {
-              await navigator.setAppBadge(0);
-            }
-          }
-        } catch {
-          // Electron may expose Chromium's API without supporting the host OS badge.
-        }
-      });
-      return appBadgeSync;
+    function nativeCovers(status) {
+      return NATIVE_ATTENTION_STATUSES.has(status);
+    }
+
+    function shouldNotify(current, attentionChanged, becameViewed) {
+      if (!attentionChanged || becameViewed) return false;
+      if (current.attention === "Plan") return true;
+      return (
+        nativeCovers(current.attention) &&
+        current.viewing === true &&
+        documentIsForeground()
+      );
     }
 
     function closeDesktopNotification(key) {
@@ -192,10 +202,7 @@
       const removed = badges.delete(key);
       const closed = closeDesktopNotification(key);
       if (!removed && !closed) return false;
-      if (removed) {
-        void syncAppBadge();
-        context.schedule();
-      }
+      if (removed) context.schedule();
       return true;
     }
 
@@ -203,10 +210,7 @@
       const count = badges.size;
       badges.clear();
       for (const key of [...desktopNotifications.keys()]) closeDesktopNotification(key);
-      if (count > 0) {
-        void syncAppBadge();
-        context.schedule();
-      }
+      if (count > 0) context.schedule();
       return count;
     }
 
@@ -426,9 +430,12 @@
           suppressedStops.delete(current.key);
         }
 
-        if (enabled && attentionChanged && !attentionWasSuppressed && !becameViewed) {
+        if (
+          enabled &&
+          !attentionWasSuppressed &&
+          shouldNotify(current, attentionChanged, becameViewed)
+        ) {
           badges.set(current.key, current);
-          void syncAppBadge();
           show(current);
         }
         threadStates.set(current.key, current);
@@ -480,7 +487,7 @@
         return false;
       }
       new window.Notification("T3 notifications are working", {
-        body: "You will be notified for Approval, Input, Plan, Failed, and Done.",
+        body: "You will be notified for Plan Ready and when the selected thread needs you while T3 is focused.",
         silent: sound !== "system",
         tag: "t3-thread-notification-test",
       });
@@ -492,7 +499,6 @@
       badges.clear();
       suppressedStops.clear();
       for (const key of [...desktopNotifications.keys()]) closeDesktopNotification(key);
-      void syncAppBadge();
       if (codecSoundUrl) URL.revokeObjectURL(codecSoundUrl);
     }
 

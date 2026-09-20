@@ -8,8 +8,8 @@ to a server.
 ## Features
 
 [`customizations.js`](./customizations.js) coordinates the feature modules and their shared T3 DOM
-access. The current features group threads by project, send completion notifications, reuse sent
-messages, and add a Customizations page to Settings.
+access. The current features group threads by project, fill in T3's native thread notifications,
+reuse sent messages, and add a Customizations page to Settings.
 
 The customization:
 
@@ -23,9 +23,9 @@ The customization:
 - removes repeated project identity from thread rows;
 - compresses active cards to two lines;
 - shows an activity or attention summary on collapsed groups;
-- sends a desktop notification with optional custom sound when an active thread needs approval,
-  input, a plan decision, failed, or finished;
-- badges affected project groups and, where supported, the app icon until the notification is acknowledged;
+- leaves T3's native Approval, Input, Failed, and Done alerts alone, and adds overlay pings for
+  Plan Ready plus the selected thread while the window is focused;
+- badges affected project groups until an overlay notification is acknowledged;
 - adds a Reuse message action beside Copy on user messages, with optional auto-send;
 - adds a Customizations page to Settings with notification and sorting controls;
 - persists settings and collapse choices in `localStorage`; and
@@ -54,8 +54,9 @@ reloading T3 Code.
 
 ### Settings
 
-Open **Settings → Customizations** to adjust notification volume, message reuse, and sidebar
-sorting. Releasing the slider previews the current notification sound.
+Open **Settings → Customizations** to adjust overlay notification volume, message reuse, and
+sidebar sorting. Releasing the slider previews the current overlay sound. Turn on T3's own
+thread notifications in **Settings → General → Behavior**.
 
 Hover over one of your messages and select Reuse message beside Copy. The message moves into the
 composer without sending. Reusing a message replaces the current composer text and removes old
@@ -129,12 +130,12 @@ window.__t3ProjectGroupedSections.setSnoozedPinnedFirst(true)
 window.__t3ProjectGroupedSections.setSnoozedPinnedFirst(false)
 ```
 
-`codec.wav` and volume `0.5` are the defaults. The sound and volume persist in `localStorage`. A
-notification clears when you open its thread, return focus to that already-open thread, send a new
-message, or start another turn. Using the visible Stop, Snooze, or Settle controls does not create
-an Approval, Input, Plan, Failed, or Done notification. Those states still notify even if the
-thread was not Working first. Plan Ready is detected from the thread even when the card has no
-pill. Clear every badge manually with:
+`codec.wav` and volume `0.5` are the defaults for overlay sounds. They persist in `localStorage`.
+Native T3 notifications cover Approval, Input, Failed, and Done when the window is in the
+background. The overlay still notifies for Plan Ready, and for Approval, Input, Failed, or Done
+on the selected thread while T3 is focused. Plan Ready is detected from the thread even when the
+card has no pill. Stop, Snooze, or Settle still suppress the overlay ping. Clear overlay badges
+with:
 
 ```js
 window.__t3ProjectGroupedSections.clearNotificationBadges()
@@ -147,8 +148,8 @@ window.__t3ProjectGroupedSections.enableNotifications()
 window.__t3ProjectGroupedSections.disableNotifications()
 ```
 
-Disabling notifications also clears existing project and app badges. Enabling them again watches
-only for future stop events.
+Disabling overlay notifications also clears overlay badges. Enabling them again watches only for
+future Plan Ready and focused-selected-thread events.
 
 Disable it without reloading:
 
@@ -193,12 +194,12 @@ node tests/sidebar-layout.test.js
 
 ### Compatibility
 
-This script was tested against the DOM and React structure shipped in T3 Code `0.0.40`. Native T3
-does not ship these customizations; the overlay still groups, sorts, notifies, and reuses on top of
-the current sidebar. Grouping treats pinned threads as Active cards in the same sortable list,
-leaves draft rows and drag markers in place, and no longer flattens a nested pinned list. Settings
-still injects a Customizations item next to General and Appearance after the native submenu
-reorganization.
+This script was tested against the DOM and React structure shipped in T3 Code `0.0.42`. Native T3
+now owns Approval, Input, Failed, and Done alerts. The overlay still groups, sorts, reuses, and
+fills in Plan Ready plus focused-selected-thread pings. Grouping treats pinned threads as Active
+cards in the same sortable list, leaves draft rows and drag markers in place, and no longer
+flattens a nested pinned list. Settings still injects a Customizations item next to General and
+Appearance.
 
 The overlay uses React's internal row and composer properties to recover project names and reuse
 message text, so a future T3 Code update may require selector or layout adjustments.
